@@ -6,11 +6,20 @@ This document specifies an orchestrated skill pipeline for complex, multi-step C
 
 The core problem with single-agent task pipelines is that a single agent context becomes overloaded when handling complicated requests, leading to poor unit test generation and inconsistent code review. The solution is to decompose the work into a strict, item-by-item loop managed by a stateful orchestrator that delegates each stage to a dedicated sub-agent.
 
+### Pipeline Variants
+
+Two orchestrator variants are provided:
+
+- **`csharp-todo-auto-pipeline`** — Orchestrates the full pipeline including automatic commit at the end. Ideal for autonomous, self-contained workflows where all changes should be committed immediately upon success.
+- **`csharp-todo-pipeline`** — Orchestrates the full pipeline **without** the commit stage. Cleans up work-in-progress files after the final rebuild. Ideal for workflows where code review or additional validation is needed before committing.
+
+Both variants share the same per-item quality gates and run the full rebuild at the end. The only difference is the final stage: commit vs. cleanup.
+
 ---
 
 ## Inputs
 
-The orchestrator (`csharp-todo-pipeline`) is provided with:
+Either orchestrator (`csharp-todo-pipeline` or `csharp-todo-auto-pipeline`) is provided with:
 
 1. **Problem summary** — a human-readable description of what is being implemented and why.
 2. **TODO list** — a numbered, ordered list of discrete work items to apply sequentially.
@@ -23,7 +32,8 @@ The orchestrator has **no authority to modify the TODO list**. It may only read 
 
 | Skill | Role |
 |---|---|
-| `csharp-todo-pipeline` | Orchestrator — manages the item loop and delegates all work |
+| `csharp-todo-pipeline` | Orchestrator (no-commit variant) — manages the item loop, delegates all work, and cleans up on success |
+| `csharp-todo-auto-pipeline` | Orchestrator (auto-commit variant) — manages the item loop, delegates all work, and commits on success |
 | `csharp-todo-work-item` | Applies the changes described by a single TODO item |
 | `csharp-todo-work-tests` | Generates or updates xUnit tests for files modified in the current item |
 | `csharp-todo-work-review-code` | Reviews modified files for standards compliance and fixes violations |
@@ -43,7 +53,7 @@ wip-todo-pipeline.md
 
 - **Absence** of this file signals the start of a fresh run → begin at item 1.
 - **Presence** of this file indicates a run in progress. The orchestrator reads it to determine the current item index and accumulated context (e.g. list of affected projects across all completed items).
-- The WIP file is never committed. It is deleted by the orchestrator only after the final rebuild and commit succeed.
+- The WIP file is never committed. For `csharp-todo-auto-pipeline`, it is deleted only after the final rebuild and commit succeed. For `csharp-todo-pipeline`, it is deleted after the final rebuild succeeds (no commit phase).
 
 ### WIP File Contents
 
@@ -151,11 +161,13 @@ Delegate to a sub-agent using the **`csharp-todo-rebuild`** skill.
 - Perform a **full rebuild** of the entire solution (`dotnet build --no-incremental Fluidite.slnx` or equivalent rebuild-all).
 - Run all unit tests (`dotnet test Fluidite.slnx`).
 
-On failure: stop the pipeline and report. Do not commit.
+On failure: stop the pipeline and report. Do not proceed to Step 6.
 
 ---
 
-### Step 6 — Commit
+### Step 6 — Final Stage
+
+**For `csharp-todo-auto-pipeline` only:**
 
 Delegate to a sub-agent using the **`csharp-commit-todo-changes`** skill.
 
@@ -166,6 +178,13 @@ Provide:
 On success:
 - Delete the WIP file (`wip-todo-pipeline.md`).
 - Report the commit hash to the user.
+
+**For `csharp-todo-pipeline` only:**
+
+Clean up the work-in-progress state:
+- Delete the WIP file (`wip-todo-pipeline.md`).
+- Delete `spec-non-compliance.md` if it exists.
+- Report success to the user (no commit is made).
 
 ---
 
@@ -187,15 +206,20 @@ To avoid rebuilding the entire solution after each sub-agent step, each sub-agen
 | Unrecoverable error in steps 1, 2, 3, or 5 | Stop pipeline. Report error. Leave WIP file in place. |
 | Spec non-compliance (step 4) | Write `spec-non-compliance.md`. Restart loop at current item N. |
 | Spec compliance achieved | Delete `spec-non-compliance.md` (if present). Advance to N+1. |
-| Final rebuild or commit fails | Stop pipeline. Report error. Do not delete WIP file. |
-| All items complete and committed | Delete WIP file. Report success and commit hash. |
+| Final rebuild fails | Stop pipeline. Report error. Do not delete WIP file. |
+| Commit fails (`csharp-todo-auto-pipeline`) | Stop pipeline. Report error. Do not delete WIP file. |
+| All items complete and rebuilt (`csharp-todo-pipeline`) | Delete WIP file. Report success. |  
+| All items complete and committed (`csharp-todo-auto-pipeline`) | Delete WIP file. Report success and commit hash. |
 
 ---
 
 ## Skill Descriptions Summary
 
 ### `csharp-todo-pipeline`
-Orchestrator. Receives a problem summary and numbered TODO list. Manages the item-by-item loop, delegates to sub-agents, tracks WIP state, and handles error/compliance branching.
+Orchestrator (no-commit variant). Receives a problem summary and numbered TODO list. Manages the item-by-item loop, delegates to sub-agents, tracks WIP state, and handles error/compliance branching. After the full rebuild succeeds, cleans up the WIP file. Does not commit.
+
+### `csharp-todo-auto-pipeline`
+Orchestrator (auto-commit variant). Receives a problem summary and numbered TODO list. Identical to `csharp-todo-pipeline` except that after the full rebuild succeeds, it automatically commits all changes using the `csharp-commit-todo-changes` skill.
 
 ### `csharp-todo-work-item`
 Applies the changes described by a single TODO item. Returns modified files and affected projects. Does not run tests — that is delegated to subsequent skills.
@@ -222,7 +246,9 @@ Accepts the problem summary, change log, and full file list. Stages all changes,
 ```
 skills/
 ├── csharp-todo-pipeline/
-│   └── SKILL.md
+│   └── SKILL.md                    # Orchestrator (no-commit variant)
+├── csharp-todo-auto-pipeline/
+│   └── SKILL.md                    # Orchestrator (auto-commit variant)
 ├── csharp-todo-work-item/
 │   └── SKILL.md
 ├── csharp-todo-work-tests/
