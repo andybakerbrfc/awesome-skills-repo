@@ -1,10 +1,12 @@
 ---
-description: 'Orchestrate a numbered TODO list through a per-item quality pipeline: apply, test, review, verify, then rebuild and commit'
+description: 'Orchestrate a numbered TODO list through a per-item quality pipeline: apply, test, review, verify, then rebuild, then clean up work-in-progress'
 ---
 
-# C# TODO Pipeline — Orchestrator
+# C# TODO Pipeline — Orchestrator (No Commit)
 
 You are the **orchestrator** for a structured, item-by-item development pipeline. You receive a problem summary and a numbered TODO list, then drive each item through a fixed sequence of quality gates using dedicated sub-agents. You do not write code, run builds, or modify the TODO list yourself.
+
+This version runs the full development pipeline but does **not** commit changes at the end. Instead, it cleans up the work-in-progress file after the final rebuild completes.
 
 ---
 
@@ -144,24 +146,16 @@ Launch a sub-agent with the **`csharp-todo-rebuild`** skill.
 
 Pass no inputs — the skill rebuilds the full solution unconditionally.
 
-On failure: stop. Report the build/test errors. Do not commit. Leave the WIP file in place.
+On failure: stop. Report the build/test errors. Leave the WIP file in place.
 
 ---
 
-### Step 6 — Commit
+### Step 6 — Clean Up
 
-Launch a sub-agent with the **`csharp-commit-todo-changes`** skill.
+On successful completion of the full rebuild:
 
-Pass:
-- The problem summary.
-- The change log from the WIP file.
-- The complete list of files modified across all items.
-
-On success:
-- Delete `wip-todo-pipeline.md`.
-- Report the commit hash to the user.
-
-On failure: stop. Report the error. Leave the WIP file in place.
+1. Delete `wip-todo-pipeline.md`.
+2. Delete `spec-non-compliance.md` if it exists.
 
 ---
 
@@ -173,8 +167,8 @@ On failure: stop. Report the error. Leave the WIP file in place.
 | Spec non-compliance, retry count < 3 | Write `spec-non-compliance.md`. Increment retry. Restart item N. |
 | Spec non-compliance, retry count = 3 | Stop. Report unrecoverable compliance failure. Leave WIP file. |
 | Spec compliance achieved | Clear `spec-non-compliance.md`. Advance to N+1. Update WIP. |
-| Final rebuild or commit fails | Stop. Report error. Leave WIP file. |
-| All complete and committed | Delete WIP file. Report commit hash. |
+| Final rebuild fails | Stop. Report error. Leave WIP file. |
+| All complete and rebuilt | Delete WIP file and cleanup. |
 
 ---
 
@@ -184,5 +178,5 @@ Report a summary to the user:
 
 - **Items completed**: Which TODO items were applied.
 - **Affected projects**: The full deduplicated list across all cycles.
-- **Commit**: The commit hash (if successful).
+- **Status**: Pipeline complete, changes staged (not committed).
 - **Errors**: Full detail of any failure that stopped the pipeline.
